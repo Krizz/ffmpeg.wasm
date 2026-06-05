@@ -102,6 +102,14 @@ EM_JS(int, is_timeout, (int64_t diff), {
     }
 });
 
+/* ffmpeg.wasm: returns the user-configured Module.timeout in milliseconds, or
+ * -1 when no timeout is set. Used to bound how long the main loop sleeps in
+ * sch_wait so the timeout is enforced promptly even in the multithreaded build,
+ * where sch_wait would otherwise block until the whole run completes. */
+EM_JS(int64_t, get_timeout, (void), {
+    return Module.timeout;
+});
+
 const char program_name[] = "ffmpeg";
 const int program_birth_year = 2000;
 
@@ -913,6 +921,7 @@ static void ffmpeg_send_progress(int64_t pts, int force_end)
 static int transcode(Scheduler *sch)
 {
     int ret = 0;
+    int timed_out = 0;
     int64_t timer_start, transcode_ts = 0;
 
     print_stream_maps();
@@ -929,12 +938,33 @@ static int transcode(Scheduler *sch)
 
     timer_start = av_gettime_relative();
 
-    while (!sch_wait(sch, stats_period, &transcode_ts)) {
+    while (1) {
+        /* ffmpeg.wasm: by default the loop sleeps for stats_period between
+         * progress reports. When a timeout is set we must not sleep past it,
+         * otherwise the multithreaded build (where sch_wait blocks until the
+         * whole run finishes) would never wake up to enforce it. Cap the wait
+         * to the time remaining before the timeout fires. */
+        uint64_t wait_us = stats_period;
+        int64_t timeout_ms = get_timeout();
+        if (timeout_ms >= 0) {
+            int64_t remaining_ms =
+                timeout_ms - (av_gettime_relative() - timer_start) / 1000;
+            if (remaining_ms < 0)
+                remaining_ms = 0;
+            if ((uint64_t)remaining_ms * 1000 < wait_us)
+                wait_us = (uint64_t)remaining_ms * 1000;
+        }
+
+        if (sch_wait(sch, wait_us, &transcode_ts))
+            break;
+
         int64_t cur_time= av_gettime_relative();
 
         /* ffmpeg.wasm: abort the run if it exceeds Module.timeout (ms). */
-        if (is_timeout((cur_time - timer_start) / 1000) == 1)
+        if (is_timeout((cur_time - timer_start) / 1000) == 1) {
+            timed_out = 1;
             break;
+        }
 
         /* if 'q' pressed, exits */
         if (stdin_interaction)
@@ -963,6 +993,11 @@ static int transcode(Scheduler *sch)
 
     /* dump report by using the first video and audio streams */
     print_report(1, timer_start, av_gettime_relative(), transcode_ts);
+
+    /* ffmpeg.wasm: a run aborted by the timeout reports a non-zero exit code
+     * and does not force progress to 1, since it did not complete. */
+    if (timed_out)
+        return 1;
 
     /* ffmpeg.wasm: make sure the progress callback ends on 1. */
     ffmpeg_send_progress(transcode_ts, 1);
