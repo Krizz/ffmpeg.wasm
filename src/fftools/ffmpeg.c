@@ -106,7 +106,7 @@ EM_JS(int, is_timeout, (int64_t diff), {
  * -1 when no timeout is set. Used to bound how long the main loop sleeps in
  * sch_wait so the timeout is enforced promptly even in the multithreaded build,
  * where sch_wait would otherwise block until the whole run completes. */
-EM_JS(int64_t, get_timeout, (void), {
+EM_JS(int, get_timeout, (void), {
     return Module.timeout;
 });
 
