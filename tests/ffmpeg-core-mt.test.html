@@ -17,6 +17,8 @@
     <script src="./test-helper-browser.js"></script>
     <script type="text/javascript">
       window.FFMPEG_TYPE = "mt";
+      window.CORE_URL = "/packages/core-mt/dist/umd/ffmpeg-core.js";
+      window.WORKER_URL = "/tests/ffmpeg-core.worker.js";
     </script>
     <script>
       mocha.setup("bdd");

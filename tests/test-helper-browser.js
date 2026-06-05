@@ -11,9 +11,113 @@ const b64ToUint8Array = (b64) => {
   return bytes;
 };
 
+// Async wrapper around an in-process FFmpegCoreModule (single-thread browser /
+// Node, where Atomics.wait is allowed on the running thread). Mirrors the
+// worker-backed proxy below so the test suite can `await` either uniformly.
+class DirectCore {
+  constructor(core) {
+    this.core = core;
+    this.FS = {
+      writeFile: async (name, data) => this.core.FS.writeFile(name, data),
+      readFile: async (name) => this.core.FS.readFile(name),
+      unlink: async (name) => this.core.FS.unlink(name),
+    };
+  }
+  setLogger(fn) {
+    this.core.setLogger(fn);
+  }
+  setProgress(fn) {
+    this.core.setProgress(fn);
+  }
+  async reset() {
+    this.core.reset();
+  }
+  async setTimeout(ms) {
+    this.core.setTimeout(ms);
+  }
+  async exec(...args) {
+    return this.core.exec(...args);
+  }
+  async get(prop) {
+    return this.core[prop];
+  }
+  async set(prop, value) {
+    this.core[prop] = value;
+  }
+}
+
+// Async proxy that drives ffmpeg-core running inside a Web Worker (multi-thread
+// browser). The worker owns the core; calls are RPCs, and log/progress events
+// are pushed back as they happen during exec().
+class WorkerCore {
+  constructor(worker) {
+    this.worker = worker;
+    this.nextId = 0;
+    this.pending = new Map();
+    this.logger = () => {};
+    this.progress = () => {};
+    this.FS = {
+      writeFile: (name, data) => this._call("writeFile", { name, data }),
+      readFile: (name) => this._call("readFile", { name }),
+      unlink: (name) => this._call("unlink", { name }),
+    };
+    worker.onmessage = ({ data }) => {
+      if (data.type === "log") return this.logger(data.data);
+      if (data.type === "progress") return this.progress(data.data);
+      const resolver = this.pending.get(data.id);
+      if (!resolver) return;
+      this.pending.delete(data.id);
+      if (data.error) resolver.reject(new Error(data.error));
+      else resolver.resolve(data.data);
+    };
+  }
+  _call(type, payload) {
+    const id = this.nextId++;
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      this.worker.postMessage({ id, type, payload });
+    });
+  }
+  setLogger(fn) {
+    this.logger = fn;
+  }
+  setProgress(fn) {
+    this.progress = fn;
+  }
+  reset() {
+    return this._call("reset");
+  }
+  setTimeout(ms) {
+    return this._call("setTimeout", { ms });
+  }
+  exec(...args) {
+    return this._call("exec", { args });
+  }
+  get(prop) {
+    return this._call("get", { prop });
+  }
+  set(prop, value) {
+    return this._call("set", { prop, value });
+  }
+}
+
+// Returns an async core adapter. Multi-threaded core in the browser runs inside
+// a Web Worker (Atomics.wait is forbidden on the page's main thread); every
+// other case runs the core in-process.
+const createCore = async () => {
+  if (typeof FFMPEG_TYPE !== "undefined" && FFMPEG_TYPE === "mt" && typeof Worker !== "undefined") {
+    const worker = new Worker(WORKER_URL);
+    const proxy = new WorkerCore(worker);
+    await proxy._call("load", { coreURL: CORE_URL });
+    return proxy;
+  }
+  return new DirectCore(await createFFmpegCore());
+};
+
 if (typeof module !== "undefined") {
   module.exports = {
     VIDEO_1S_MP4,
     b64ToUint8Array,
+    createCore,
   };
 }
