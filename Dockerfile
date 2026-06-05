@@ -135,13 +135,6 @@ RUN git clone --recursive -b $ZIMG_BRANCH https://github.com/sekrit-twc/zimg.git
 COPY build/zimg.sh /src/build.sh
 RUN bash -x /src/build.sh
 
-# Build whisper.cpp (OpenAI Whisper speech-to-text, used by FFmpeg's whisper filter)
-FROM emsdk-base AS whisper-builder
-ENV WHISPER_BRANCH=v1.7.6
-ADD https://github.com/ggml-org/whisper.cpp.git#$WHISPER_BRANCH /src
-COPY build/whisper.sh /src/build.sh
-RUN bash -x /src/build.sh
-
 # Base ffmpeg image with dependencies and source code populated.
 FROM emsdk-base AS ffmpeg-base
 RUN embuilder build sdl2 sdl2-mt
@@ -156,7 +149,6 @@ COPY --from=vorbis-builder $INSTALL_DIR $INSTALL_DIR
 COPY --from=libwebp-builder $INSTALL_DIR $INSTALL_DIR
 COPY --from=libass-builder $INSTALL_DIR $INSTALL_DIR
 COPY --from=zimg-builder $INSTALL_DIR $INSTALL_DIR
-COPY --from=whisper-builder $INSTALL_DIR $INSTALL_DIR
 
 # Build ffmpeg
 FROM ffmpeg-base AS ffmpeg-builder
@@ -175,8 +167,7 @@ RUN bash -x /src/build.sh \
       --enable-libfreetype \
       --enable-libfribidi \
       --enable-libass \
-      --enable-libzimg \
-      --enable-whisper
+      --enable-libzimg
 
 # Build ffmpeg.wasm
 FROM ffmpeg-builder AS ffmpeg-wasm-builder
@@ -203,11 +194,7 @@ ENV FFMPEG_LIBS \
       -lfribidi \
       -lharfbuzz \
       -lass \
-      -lzimg \
-      -lwhisper \
-      -lggml \
-      -lggml-cpu \
-      -lggml-base
+      -lzimg
 RUN mkdir -p /src/dist/umd && bash -x /src/build.sh \
       ${FFMPEG_LIBS} \
       -o dist/umd/ffmpeg-core.js
