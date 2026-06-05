@@ -8,26 +8,27 @@ set -euo pipefail
 EXPORT_NAME="createFFmpegCore"
 
 CONF_FLAGS=(
-  -I. 
-  -I./src/fftools 
+  -I.
+  -I./src
+  -I./src/fftools
+  -I./compat/stdbit                        # FFmpeg's C23 <stdbit.h> shim, used by fftools/ffmpeg_dec.c. FFmpeg's own configure adds this when the compiler lacks stdbit.h (emsdk's clang does); this separate emcc build needs it too.
   -I$INSTALL_DIR/include 
   -L$INSTALL_DIR/lib 
   -Llibavcodec 
   -Llibavdevice 
   -Llibavfilter 
   -Llibavformat 
-  -Llibavutil 
-  -Llibpostproc 
-  -Llibswresample 
-  -Llibswscale 
-  -lavcodec 
-  -lavdevice 
-  -lavfilter 
-  -lavformat 
-  -lavutil 
-  -lpostproc 
-  -lswresample 
-  -lswscale 
+  -Llibavutil
+  -Llibswresample
+  -Llibswscale
+  -lavcodec
+  -lavdevice
+  -lavfilter
+  -lavformat
+  -lavutil
+  -lswresample
+  -lswscale
+  # NOTE: libpostproc was removed in FFmpeg 8.0, so there is no -lpostproc here.
   -Wno-deprecated-declarations 
   $LDFLAGS 
   -sENVIRONMENT=worker
@@ -35,23 +36,46 @@ CONF_FLAGS=(
   -sUSE_SDL=2                              # use emscripten SDL2 lib port
   -sSTACK_SIZE=5MB                         # increase stack size to support libopus
   -sMODULARIZE                             # modularized to use as a library
-  ${FFMPEG_MT:+ -sINITIAL_MEMORY=1024MB}   # ALLOW_MEMORY_GROWTH is not recommended when using threads, thus we use a large initial memory
+  ${FFMPEG_MT:+ -sINITIAL_MEMORY=512MB -sALLOW_MEMORY_GROWTH -sMAXIMUM_MEMORY=4GB} # start small and grow to the wasm32 4GB ceiling on demand; low initial avoids up-front alloc failures on low-RAM devices
   ${FFMPEG_MT:+ -sPTHREAD_POOL_SIZE=32}    # use 32 threads
-  ${FFMPEG_ST:+ -sINITIAL_MEMORY=32MB -sALLOW_MEMORY_GROWTH} # Use just enough memory as memory usage can grow
+  ${FFMPEG_ST:+ -sINITIAL_MEMORY=32MB -sALLOW_MEMORY_GROWTH -sMAXIMUM_MEMORY=4GB} # Use just enough memory as memory usage can grow
   -sEXPORT_NAME="$EXPORT_NAME"             # required in browser env, so that user can access this module from window object
   -sEXPORTED_FUNCTIONS=$(node src/bind/ffmpeg/export.js) # exported functions
   -sEXPORTED_RUNTIME_METHODS=$(node src/bind/ffmpeg/export-runtime.js) # exported built-in functions
   -lworkerfs.js
   --pre-js src/bind/ffmpeg/bind.js        # extra bindings, contains most of the ffmpeg.wasm javascript code
-  # ffmpeg source code
-  src/fftools/cmdutils.c 
-  src/fftools/ffmpeg.c 
-  src/fftools/ffmpeg_filter.c 
-  src/fftools/ffmpeg_hw.c 
-  src/fftools/ffmpeg_mux.c 
-  src/fftools/ffmpeg_opt.c 
-  src/fftools/opt_common.c 
-  src/fftools/ffprobe.c 
+  # ffmpeg source code (fftools, n8.0 layout). The CLI was split into a
+  # thread-based scheduler plus per-stage modules, and ffprobe's output moved
+  # to the textformat/ writers, so the file list is much larger than in 5.1.4.
+  # graphprint.c is our no-op stub (see src/fftools/graph/graphprint.c) which
+  # lets us drop the resources/resman codegen.
+  src/fftools/cmdutils.c
+  src/fftools/opt_common.c
+  src/fftools/ffmpeg.c
+  src/fftools/ffmpeg_dec.c
+  src/fftools/ffmpeg_demux.c
+  src/fftools/ffmpeg_enc.c
+  src/fftools/ffmpeg_filter.c
+  src/fftools/ffmpeg_hw.c
+  src/fftools/ffmpeg_mux.c
+  src/fftools/ffmpeg_mux_init.c
+  src/fftools/ffmpeg_opt.c
+  src/fftools/ffmpeg_sched.c
+  src/fftools/sync_queue.c
+  src/fftools/thread_queue.c
+  src/fftools/graph/graphprint.c
+  src/fftools/ffprobe.c
+  src/fftools/textformat/avtextformat.c
+  src/fftools/textformat/tf_compact.c
+  src/fftools/textformat/tf_default.c
+  src/fftools/textformat/tf_flat.c
+  src/fftools/textformat/tf_ini.c
+  src/fftools/textformat/tf_json.c
+  src/fftools/textformat/tf_mermaid.c
+  src/fftools/textformat/tf_xml.c
+  src/fftools/textformat/tw_avio.c
+  src/fftools/textformat/tw_buffer.c
+  src/fftools/textformat/tw_stdout.c
 )
 
 emcc "${CONF_FLAGS[@]}" $@

@@ -7,8 +7,11 @@ ARG EXTRA_LDFLAGS
 ARG FFMPEG_ST
 ARG FFMPEG_MT
 ENV INSTALL_DIR=/opt
-# We cannot upgrade to n6.0 as ffmpeg bin only supports multithread at the moment.
-ENV FFMPEG_VERSION=n5.1.4
+# FFmpeg 7.0+ rebuilt the command-line tools around a thread-based scheduler
+# (fftools/ffmpeg_sched.c), so the CLI now requires pthreads. That means only
+# the multi-threaded (mt) core can be built from n8.0 onwards; the old
+# single-threaded core is no longer supported. See build/ffmpeg-wasm.sh.
+ENV FFMPEG_VERSION=n8.0
 ENV CFLAGS="-I$INSTALL_DIR/include $CFLAGS $EXTRA_CFLAGS"
 ENV CXXFLAGS="$CFLAGS"
 ENV LDFLAGS="-L$INSTALL_DIR/lib $LDFLAGS $CFLAGS $EXTRA_LDFLAGS"
@@ -132,6 +135,13 @@ RUN git clone --recursive -b $ZIMG_BRANCH https://github.com/sekrit-twc/zimg.git
 COPY build/zimg.sh /src/build.sh
 RUN bash -x /src/build.sh
 
+# Build whisper.cpp (OpenAI Whisper speech-to-text, used by FFmpeg's whisper filter)
+FROM emsdk-base AS whisper-builder
+ENV WHISPER_BRANCH=v1.7.6
+ADD https://github.com/ggml-org/whisper.cpp.git#$WHISPER_BRANCH /src
+COPY build/whisper.sh /src/build.sh
+RUN bash -x /src/build.sh
+
 # Base ffmpeg image with dependencies and source code populated.
 FROM emsdk-base AS ffmpeg-base
 RUN embuilder build sdl2 sdl2-mt
@@ -146,6 +156,7 @@ COPY --from=vorbis-builder $INSTALL_DIR $INSTALL_DIR
 COPY --from=libwebp-builder $INSTALL_DIR $INSTALL_DIR
 COPY --from=libass-builder $INSTALL_DIR $INSTALL_DIR
 COPY --from=zimg-builder $INSTALL_DIR $INSTALL_DIR
+COPY --from=whisper-builder $INSTALL_DIR $INSTALL_DIR
 
 # Build ffmpeg
 FROM ffmpeg-base AS ffmpeg-builder
@@ -164,7 +175,8 @@ RUN bash -x /src/build.sh \
       --enable-libfreetype \
       --enable-libfribidi \
       --enable-libass \
-      --enable-libzimg 
+      --enable-libzimg \
+      --enable-whisper
 
 # Build ffmpeg.wasm
 FROM ffmpeg-builder AS ffmpeg-wasm-builder
@@ -191,7 +203,11 @@ ENV FFMPEG_LIBS \
       -lfribidi \
       -lharfbuzz \
       -lass \
-      -lzimg
+      -lzimg \
+      -lwhisper \
+      -lggml \
+      -lggml-cpu \
+      -lggml-base
 RUN mkdir -p /src/dist/umd && bash -x /src/build.sh \
       ${FFMPEG_LIBS} \
       -o dist/umd/ffmpeg-core.js
