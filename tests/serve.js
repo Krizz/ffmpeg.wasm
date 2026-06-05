@@ -46,12 +46,26 @@ const server = http.createServer((req, res) => {
   }
 
   fs.stat(filePath, (err, stat) => {
-    if (err || !stat.isFile()) {
+    if (err) {
       res.writeHead(404).end("Not found");
       return;
     }
-    res.setHeader("Content-Type", MIME[path.extname(filePath)] || "application/octet-stream");
-    fs.createReadStream(filePath).pipe(res);
+    // Resolve directory requests to index.html, falling back to a plain 200 so
+    // health checks (e.g. start-server-and-test waiting on `/`) succeed instead
+    // of seeing a 404 and timing out.
+    let targetPath = filePath;
+    if (stat.isDirectory()) {
+      const indexPath = path.join(filePath, "index.html");
+      if (fs.existsSync(indexPath)) {
+        targetPath = indexPath;
+      } else {
+        res.setHeader("Content-Type", "text/plain");
+        res.writeHead(200).end("OK");
+        return;
+      }
+    }
+    res.setHeader("Content-Type", MIME[path.extname(targetPath)] || "application/octet-stream");
+    fs.createReadStream(targetPath).pipe(res);
   });
 });
 
