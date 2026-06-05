@@ -1,4 +1,7 @@
 ---
+
+> **Disclaimer:** This repo is AI slop. It exists solely to get [clipcut.dev](http://clipcut.dev) working on multithreaded ffmpeg 8. For any other use case it will likely not work.
+
 <p align="center">
   <a href="#">
     <img alt="ffmpeg.wasm" width="128px" height="128px" src="https://github.com/ffmpegwasm/ffmpeg.wasm/blob/main/apps/website/static/img/logo192.png"></img>
