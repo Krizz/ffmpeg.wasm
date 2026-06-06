@@ -36,8 +36,13 @@ CONF_FLAGS=(
   -sUSE_SDL=2                              # use emscripten SDL2 lib port
   -sSTACK_SIZE=5MB                         # increase stack size to support libopus
   -sMODULARIZE                             # modularized to use as a library
-  ${FFMPEG_MT:+ -sINITIAL_MEMORY=512MB -sALLOW_MEMORY_GROWTH -sMAXIMUM_MEMORY=4GB} # start small and grow to the wasm32 4GB ceiling on demand; low initial avoids up-front alloc failures on low-RAM devices
-  ${FFMPEG_MT:+ -sPTHREAD_POOL_SIZE=32}    # use 32 threads
+  # NOTE: INITIAL_MEMORY is large and load-bearing, not just a hint. Memory
+  # growth deadlocks in this build: the FFmpeg 8.0 scheduler blocks the runtime
+  # "main thread" (the core Web Worker) inside sch_wait for the whole run, so a
+  # shared-memory grow requested by a stage thread can never be coordinated and
+  # the transcode hangs. Reserve enough up front that a run never needs to grow.
+  ${FFMPEG_MT:+ -sINITIAL_MEMORY=512MB -sALLOW_MEMORY_GROWTH -sMAXIMUM_MEMORY=4GB}
+  ${FFMPEG_MT:+ -sPTHREAD_POOL_SIZE=32}    # pre-spawned worker pool. Counter-intuitively this must stay generous even though codec-internal threading is disabled (see ffmpeg_dec.c / ffmpeg_mux_init.c): because the scheduler blocks the runtime main thread for the whole run, exited stage threads cannot have their workers reclaimed to the pool mid-run, so the pool must cover the *cumulative* thread count of a run, not just the concurrent peak. Shrinking to 16 deadlocks a simple transcode
   ${FFMPEG_ST:+ -sINITIAL_MEMORY=32MB -sALLOW_MEMORY_GROWTH -sMAXIMUM_MEMORY=4GB} # Use just enough memory as memory usage can grow
   -sEXPORT_NAME="$EXPORT_NAME"             # required in browser env, so that user can access this module from window object
   -sEXPORTED_FUNCTIONS=$(node src/bind/ffmpeg/export.js) # exported functions
