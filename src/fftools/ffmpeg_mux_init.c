@@ -1422,9 +1422,14 @@ static int ost_add(Muxer *mux, const OptionsContext *o, enum AVMediaType type,
         if (ret < 0)
             goto fail;
 
-        // default to automatic thread count
+        /* ffmpeg.wasm: default encoding to a single codec thread (1) rather
+         * than automatic (0). Codec-internal frame/slice threads would call
+         * pthread_create from the encoder's own scheduler pthread, which the
+         * multithreaded build proxies back to the blocked core worker and
+         * deadlocks. See the matching note in ffmpeg_dec.c. Scheduler pipeline
+         * threading is unaffected; -threads still overrides this. */
         if (!threads_manual)
-            ost->enc->enc_ctx->thread_count = 0;
+            ost->enc->enc_ctx->thread_count = 1;
     } else {
         ret = filter_codec_opts(o->g->codec_opts, AV_CODEC_ID_NONE, oc, st,
                                 NULL, &encoder_opts,

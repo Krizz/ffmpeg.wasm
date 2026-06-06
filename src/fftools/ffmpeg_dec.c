@@ -1569,8 +1569,19 @@ static int dec_open(DecoderPriv *dp, AVDictionary **dec_opts,
     dp->dec_ctx->get_buffer2           = get_buffer;
     dp->dec_ctx->pkt_timebase          = o->time_base;
 
+    /* ffmpeg.wasm: default decoding to a single codec thread instead of "auto".
+     * In the multithreaded build the CLI runs inside a Web Worker, which is the
+     * Emscripten runtime "main thread" and owns the pthread worker pool. With
+     * FFmpeg 8.0's threaded scheduler the decoder runs on its own pthread, so
+     * when libavcodec spawns frame/slice threads the pthread_create is posted
+     * back to that worker to be serviced from its event loop. But the worker is
+     * blocked synchronously inside _ffmpeg() for the whole run, so it never
+     * processes the spawn request and the transcode deadlocks. Scheduler-level
+     * parallelism (demux/decode/filter/encode/mux on separate threads) is
+     * unaffected; only codec-internal threading is disabled. Passing -threads
+     * explicitly re-enables it (and reintroduces the deadlock). */
     if (!av_dict_get(*dec_opts, "threads", NULL, 0))
-        av_dict_set(dec_opts, "threads", "auto", 0);
+        av_dict_set(dec_opts, "threads", "1", 0);
 
     ret = hw_device_setup_for_decode(dp, codec, o->hwaccel_device);
     if (ret < 0) {
