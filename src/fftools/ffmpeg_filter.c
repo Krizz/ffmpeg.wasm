@@ -1927,6 +1927,19 @@ static int configure_filtergraph(FilterGraph *fg, FilterGraphThread *fgt)
             ret = av_opt_set_int(fgt->graph, "threads", fgp->nb_threads, 0);
             if (ret < 0)
                 return ret;
+        } else {
+            /* ffmpeg.wasm: default a simple filtergraph to a single thread
+             * instead of avfilter's "auto" (= nb_cpus). The filtergraph runs on
+             * its own scheduler pthread; a slice-threaded filter (e.g.
+             * paletteuse for GIF) would call pthread_create from that pthread,
+             * which the multithreaded build posts back to the core worker —
+             * blocked synchronously inside _ffmpeg() — so the spawn is never
+             * serviced and filtering deadlocks. Mirrors the codec thread_count=1
+             * defaults in ffmpeg_dec.c / ffmpeg_mux_init.c. -filter_threads
+             * still overrides this (and reintroduces the deadlock). */
+            ret = av_opt_set_int(fgt->graph, "threads", 1, 0);
+            if (ret < 0)
+                goto fail;
         }
 
         if (av_dict_count(ofp->sws_opts)) {
@@ -1946,7 +1959,10 @@ static int configure_filtergraph(FilterGraph *fg, FilterGraphThread *fgt)
             av_free(args);
         }
     } else {
-        fgt->graph->nb_threads = filter_complex_nbthreads;
+        /* ffmpeg.wasm: a complex filtergraph defaults to 1 thread for the same
+         * reason as the simple case above (filter_complex_nbthreads is 0 =
+         * "auto" by default). -filter_complex_threads still overrides it. */
+        fgt->graph->nb_threads = filter_complex_nbthreads ? filter_complex_nbthreads : 1;
     }
 
     if (filter_buffered_frames) {

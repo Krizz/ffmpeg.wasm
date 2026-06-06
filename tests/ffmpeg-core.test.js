@@ -53,6 +53,23 @@ describe(genName("exec()"), () => {
     expect(out.length).to.not.equal(0);
     await core.FS.unlink("video.avi");
   });
+
+  // Regression: a two-pass palettegen/paletteuse GIF graph uses a slice-threaded
+  // filter. With the filtergraph left at "auto" threads it deadlocked on core-mt
+  // (pthread_create from the filter pthread is never serviced by the blocked core
+  // worker). Filtergraph threads now default to 1; this must complete, not hang.
+  it("should transcode to gif (two-pass palette)", async () => {
+    expect(
+      await core.exec(
+        "-i", "video.mp4",
+        "-vf", "split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse",
+        "-y", "video.gif"
+      )
+    ).to.equal(0);
+    const out = await core.FS.readFile("video.gif");
+    expect(out.length).to.not.equal(0);
+    await core.FS.unlink("video.gif");
+  });
 });
 
 describe(genName("setTimeout()"), () => {
